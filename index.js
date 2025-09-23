@@ -77,7 +77,7 @@ client.on('messageCreate', async (msg) => {
 
     // Commandes système
     if (msg.content === "/connect") {
-        const link = `http://YOUR_SERVER_ADDRESS/qr/${userId}`;
+        const link = `https://py-bot-v2.onrender.com/qr/${userId}`;
         return msg.reply(`Clique sur ce lien pour connecter ton WhatsApp : ${link}`);
     }
 
