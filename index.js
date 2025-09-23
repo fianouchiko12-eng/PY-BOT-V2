@@ -31,7 +31,7 @@ async function startSession(userId) {
         const { connection, lastDisconnect, qr } = update;
 
         if (qr) {
-            qrStore[userId] = qr; // stocke le QR
+            qrStore[userId] = qr;
             console.log(`📲 Nouveau QR pour ${userId}`);
         }
 
@@ -56,7 +56,7 @@ async function startSession(userId) {
     return sock;
 }
 
-// --- Page HTML pour connecter WhatsApp par utilisateur ---
+// --- Page HTML QR individuelle ---
 app.get('/', (req, res) => {
     const userId = req.query.userId;
     if (!userId) return res.send("<h3 style='color:red;'>⚠️ userId manquant dans l'URL.</h3>");
@@ -77,12 +77,15 @@ app.get('/', (req, res) => {
         <img id="qr" src="" />
         <p id="status"></p>
         <script>
+          const userId = "${userId}";
+
           async function fetchQR() {
             try {
-              const res = await fetch('/qr-data?userId=${userId}');
+              const res = await fetch('/qr-data?userId=' + userId);
               const data = await res.json();
               const img = document.getElementById('qr');
               const status = document.getElementById('status');
+
               if (data.qr) {
                 img.src = data.qr;
                 img.style.display = "block";
@@ -91,8 +94,12 @@ app.get('/', (req, res) => {
                 img.style.display = "none";
                 status.innerText = "✅ Déjà connecté";
               }
-            } catch(err){ console.error(err); }
+            } catch(err){
+              console.error(err);
+              document.getElementById('status').innerText = "❌ Erreur serveur";
+            }
           }
+
           fetchQR();
           setInterval(fetchQR, 5000);
         </script>
@@ -101,10 +108,12 @@ app.get('/', (req, res) => {
     `);
 });
 
-// --- Endpoint pour renvoyer le QR en JSON ---
+// --- Endpoint QR JSON ---
 app.get('/qr-data', async (req, res) => {
     const userId = req.query.userId;
     if (!userId) return res.status(400).json({ error: "userId manquant" });
+
+    if (sessions[userId]) return res.json({ qr: null });
 
     const qr = qrStore[userId];
     if (!qr) return res.json({ qr: null });
@@ -129,6 +138,8 @@ app.get('/dashboard', (req, res) => {
           table { border-collapse:collapse; width:100%; }
           th, td { border:1px solid #00ffae; padding:8px; text-align:center; }
           img { width:120px; height:120px; }
+          .status-connected { color: #00ffae; font-weight:bold; }
+          .status-disconnected { color: #ff4d4d; font-weight:bold; }
         </style>
       </head>
       <body>
@@ -155,10 +166,11 @@ app.get('/dashboard', (req, res) => {
               for(const userId of Object.keys(data)) {
                 const { status, qr } = data[userId];
                 const qrHtml = qr ? '<img src="' + qr + '" />' : '-';
+                const statusClass = status.includes("Connecté") ? "status-connected" : "status-disconnected";
                 tbody.innerHTML += \`
                   <tr>
                     <td>\${userId}</td>
-                    <td>\${status}</td>
+                    <td class="\${statusClass}">\${status}</td>
                     <td>\${qrHtml}</td>
                   </tr>
                 \`;
@@ -174,17 +186,23 @@ app.get('/dashboard', (req, res) => {
     `);
 });
 
-// Endpoint JSON pour dashboard live
+// --- Endpoint JSON dashboard ---
 app.get('/dashboard-data', async (req, res) => {
     const data = {};
-    for(const userId of Object.keys(sessions).concat(Object.keys(qrStore))) {
-        const status = sessions[userId] ? "✅ Connecté" : "⚠️ Pas connecté";
+    const allUsers = new Set([...Object.keys(sessions), ...Object.keys(qrStore)]);
+
+    for(const userId of allUsers) {
+        const isConnected = !!sessions[userId];
+        const status = isConnected ? "✅ Connecté" : "⚠️ Pas connecté";
+
         let qrImage = null;
-        if(qrStore[userId]) {
+        if (!isConnected && qrStore[userId]) {
             try { qrImage = await qrcode.toDataURL(qrStore[userId]); } catch { qrImage = null; }
         }
+
         data[userId] = { status, qr: qrImage };
     }
+
     res.json(data);
 });
 
@@ -195,11 +213,11 @@ client.on('messageCreate', async (msg) => {
 
     if (msg.content === "/connect") {
         const link = `https://py-bot-v2.onrender.com/?userId=${userId}`;
-        return msg.reply(`Clique sur ce lien pour connecter ton WhatsApp : ${link}`);
+        return msg.reply(`📲 Clique sur ce lien pour connecter ton WhatsApp :\n${link}`);
     }
 
     if (msg.content === "/status") {
-        return msg.reply(sessions[userId] ? "✅ Connecté à WhatsApp." : "❌ Pas connecté.");
+        return msg.reply(sessions[userId] ? "✅ Tu es connecté à WhatsApp." : "❌ Tu n'es pas connecté.");
     }
 
     if (msg.content === "/disconnect") {
@@ -207,8 +225,8 @@ client.on('messageCreate', async (msg) => {
             try { sessions[userId].ws?.close(); } catch {}
             delete sessions[userId];
             delete qrStore[userId];
-            return msg.reply("🔌 Déconnecté.");
-        } else return msg.reply("⚠️ Pas connecté.");
+            return msg.reply("🔌 Tu as été déconnecté de WhatsApp.");
+        } else return msg.reply("⚠️ Tu n'étais pas connecté.");
     }
 
     if (msg.content === "/ping") {
